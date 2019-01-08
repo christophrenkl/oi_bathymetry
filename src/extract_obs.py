@@ -4,10 +4,6 @@
 
 """
 import dask.dataframe as dd
-import numpy as np
-import pandas as pd
-
-import matplotlib.pyplot as plt
 
 def main():
 
@@ -17,15 +13,10 @@ def main():
     latmin = 37.567801
     latmax = 48.848009
 
+    # client = Client(processes=False)
+
     # data types of columns
-    dtypes = {'Year': float,
-              'Month': float,
-              'Day': float,
-              'Hr': float,
-              'Min': float,
-              'Sec': float,
-              'Lon': float,
-              'Lon': float,
+    dtypes = {'Lon': float,
               'Lat': float,
               'Obj_type': str,
               'Med_depth': float,
@@ -35,12 +26,11 @@ def main():
               'Group_Id': str}
 
     # read file with observations as Dask.DataFrame
-    df = dd.read_csv('/media/chrenkl/external/NWATL21_out.txt',
+    df = dd.read_csv('data/raw/NWATL21_out.txt',
                      sep='\s+',
-                     na_values = {'Day' :      'NORTH2008',
-                                  'Hr':        'NORTH2008',
-                                  'Min':       'NORTH2008',
-                                  'Lon':       '-157.6566-1436.630000',
+                     usecols=['Lon', 'Lat', 'Med_depth',
+                              'Agency', 'Group_Id', 'Vertical_ref'],
+                     na_values = {'Lon':       '-157.6566-1436.630000',
                                   'Lat':       'UNH',
                                   'Med_depth': ['MSL:2006',
                                                 '-2400.01TIBEAM',
@@ -51,7 +41,7 @@ def main():
     # Note that the last argument drops all lines which have more columns than
     # suggested by the header. A warning will be printed to the terminal.
 
-    # preprocessing ---
+    # data extraction ----------------------------------------------------------
 
     # remove incomplete data
     df = df.dropna()
@@ -62,43 +52,21 @@ def main():
                 (df['Lat'] >= latmin) &
                 (df['Lat'] <= latmax)]
 
-    # remove data with Med_depth < -10000
-    df = df.loc[df['Med_depth'] > -1e4]
-
     # remove data from gridded and interpolated products
-    df = df.loc[(df['Agency'] != 'GMT')    |
-                (df['Agency'] != 'NETCDF') |
-                (df['Agency'] != 'NGDC')   |
-                (df['Agency'] != 'IBCAO')  |
-                (df['Agency'] != 'ABC')    |
-                (df['Agency'] != 'CHSQUE') |
-                (df['Agency'] != 'NSTOPO') |
+    df = df.loc[(df['Agency'] != 'GMT')    &
+                (df['Agency'] != 'NETCDF') &
+                (df['Agency'] != 'NGDC')   &
+                (df['Agency'] != 'IBCAO')  &
+                (df['Agency'] != 'ABC')    &
+                (df['Agency'] != 'CHSQUE') &
+                (df['Agency'] != 'NSTOPO') &
                 (df['Agency'] != 'INTERP')]
 
-    # remove data with certain Group_Id which have been identified to have
-    # inconsistent depth values
-    df = df.loc[(df['Group_Id'] != 'ect18-38')      |
-                (df['Group_Id'] != 'ch036l01')      |
-                (df['Group_Id'] != 'c2207')         |
-                (df['Group_Id'] != 'p885ns')        |
-                (df['Group_Id'] != 'a2091l01')      |
-                (df['Group_Id'] != 'kn151l4')       |
-                (df['Group_Id'] != 'KJACK2006')     |
-                (df['Group_Id'] != 'BROWNSBANK1996')]
+    # drop Agency column
+    df = df.drop('Agency')
 
-
-    # remove data with inappropriate reference level
-    # df = df.loc[(df[''])]
-    df = df.compute()
-
-    plt.scatter(df['Lon'], df['Lat'],
-                c=df['Med_depth'])
-
-    plt.show()
-
-    # print(df.head())
-
-
+    # write output file
+    df.to_parquet('data/interim/NWATL21_subset')
 
 if __name__ == '__main__':
 
