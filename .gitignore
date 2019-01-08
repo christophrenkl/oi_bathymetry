@@ -5,7 +5,7 @@ data/
 reports/figures/*.pdf
 
 # exclude dask files
-src/dask-worker-space/
+dask-worker-space/
 
 # Python Files ================================================================
 # Source: https://github.com/github/gitignore/blob/master/Python.gitignore
