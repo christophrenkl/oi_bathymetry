@@ -45,23 +45,33 @@ def main():
     outcols = ['Lon', 'Lat', 'Med_depth']
 
     # observations relative to MSL or MWL - no correction needed.
-    dfmsl = df.loc[(df['Vertical_ref'] == 'MSL:2005')         |
+    msldf = df.loc[(df['Vertical_ref'] == 'MSL:2005')         |
                    (df['Vertical_ref'] == 'MSL:2006')         |
                    (df['Vertical_ref'] == 'MWL:2006')         |
                    (((df['Vertical_ref'] == 'LLWLT:2005')     |
                      (df['Vertical_ref'] == 'LLWLT:2006')     |
                      (df['Vertical_ref'] == 'VER_DAT:LLWLT')) &
-                     (df['Med_depth'] < -200)), outcols]
-
-    # observations relative to LLWLT - correction needed.
-    dfllwlt = df.loc[((df['Vertical_ref'] == 'LLWLT:2005')     |
-                      (df['Vertical_ref'] == 'LLWLT:2006')     |
-                      (df['Vertical_ref'] == 'VER_DAT:LLWLT')) &
-                     (df['Med_depth'] >= -200), outcols]
+                     (df['Med_depth'] < -200)), outcols].compute()
 
     # write output files
-    dfmsl.to_parquet('data/interim/NWATL21_subset_msl')
-    dfllwlt.to_parquet('data/interim/NWATL21_subset_llwlt')
+    store = pd.HDFStore('data/interim/NWATL21_subset_msl.h5')
+    store.put('df', msldf, data_columns=msldf.columns)
+    store.close()
+
+    del msldf
+
+    # observations relative to LLWLT - correction needed.
+    llwltdf = df.loc[((df['Vertical_ref'] == 'LLWLT:2005')     |
+                      (df['Vertical_ref'] == 'LLWLT:2006')     |
+                      (df['Vertical_ref'] == 'VER_DAT:LLWLT')) &
+                     (df['Med_depth'] >= -200), outcols].compute()
+
+    # write output files
+    store = pd.HDFStore('data/interim/NWATL21_subset_llwlt.h5')
+    store.put('df', llwltdf, data_columns=llwltdf.columns)
+    store.close()
+
+    del llwltdf
 
 
 if __name__ == '__main__':
