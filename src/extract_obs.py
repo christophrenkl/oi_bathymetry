@@ -13,6 +13,8 @@ def main():
     latmin = 37.567801
     latmax = 48.848009
 
+    fname = '/media/chrenkl/external/NWATL21_out.txt'
+
     # client = Client(processes=False)
 
     # data types of columns
@@ -26,7 +28,7 @@ def main():
               'Group_Id': str}
 
     # read file with observations as Dask.DataFrame
-    df = dd.read_csv('data/raw/NWATL21_out.txt',
+    df = dd.read_csv(fname,
                      sep='\s+',
                      usecols=['Lon', 'Lat', 'Med_depth',
                               'Agency', 'Group_Id', 'Vertical_ref'],
