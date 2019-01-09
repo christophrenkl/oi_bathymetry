@@ -65,7 +65,7 @@ def main():
                 (df['Agency'] != 'INTERP')]
 
     # drop Agency column
-    df = df.drop('Agency')
+    df = df.drop('Agency', axis=1)
 
     # write output file
     df.to_parquet('data/interim/NWATL21_subset')
