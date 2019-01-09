@@ -5,7 +5,7 @@
 A collection of functions to create a gridded bathymetry.
 
 """
-
+import numpy as np
 import xarray as xr
 
 def read_grid(fname):
