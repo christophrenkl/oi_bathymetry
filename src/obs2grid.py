@@ -10,9 +10,6 @@ import xarray as xr
 
 from tools import read_grid, ll2xyz
 
-import matplotlib.pyplot as plt
-
-
 
 def main():
 
@@ -40,9 +37,9 @@ def main():
 
     # find indices of the nearest points in the flattened array
     dist, ind = tree.query(list(zip(xo, yo, zo)),
-                                     k=1,
-                                     distance_upper_bound=dmax,
-                                      n_jobs=-1)
+                           k=1,
+                           distance_upper_bound=dmax,
+                           n_jobs=-1)
 
     # add index as column to data frame, this way we can use pandas groupby
     # functionality to easily calculate the median for each model grid point
