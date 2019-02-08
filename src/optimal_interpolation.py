@@ -8,6 +8,8 @@ import numpy as np
 from scipy.spatial import cKDTree
 import xarray as xr
 
+import dask
+
 from tools import ll2xyz
 
 import matplotlib.pyplot as plt
@@ -23,8 +25,8 @@ def main():
     bg = bg.stack(z=('x', 'y'))
     obs = obs.stack(z=('x', 'y'))
 
-    # drop all grid poiunts without observations
-    obs =  obs.where(obs != 0, drop=True)
+    # drop all grid points without observations
+    obs =  obs.where(obs != 0., drop=True)
 
     # number of grid points with observations
     nobs = len(obs.z)
@@ -33,18 +35,39 @@ def main():
     xbg, ybg, zbg = ll2xyz(bg.lon.values, bg.lat.values)
     xo, yo, zo = ll2xyz(obs.lon.values, obs.lat.values)
 
-    # initialize H-matrix
-    H = da.zeros((nobs, len(bg.z)), chunks=(1000, 1000))
-
     # create cKDTree object to represent source grid
     tree = cKDTree(list(zip(xbg, ybg, zbg)))
 
     # find indices of the nearest neighbor
     _, ind = tree.query(list(zip(xo, yo, zo)), k=1, n_jobs=-1)
 
-    # fill H-matrix at indices of nearest neighbour
-    for irow in range(nobs):
-        H[0, 56] = 1.
+    # create H-matrix with dimension [nobs, len(bg.z)]
+    H = h_matrix(ind, len(bg.z))
+
+    print(H)
+
+
+def h_matrix(ind, ncols):
+
+    create_row_lazy = dask.delayed(create_row, pure=True)
+
+    lazy_rows = [create_row_lazy(ncols, ii) for ii in ind]
+
+    sample = lazy_rows[0].compute()  # load the first image (assume rest are same shape/dtype)
+
+    rows = [da.from_delayed(lazy_row,           # Construct a small Dask array
+                            dtype=sample.dtype,   # for every lazy value
+                            shape=sample.shape) for lazy_row in lazy_rows]
+
+    return da.stack(rows, axis=0).rechunk(chunks=(1000, 1000))
+
+
+def create_row(length, ind):
+    row = np.zeros((length))
+    row[ind] = 1
+    return row
+
+
 
 
     # # compute innovation (y - Hx)
