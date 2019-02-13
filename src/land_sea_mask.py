@@ -5,44 +5,40 @@
     https://stackoverflow.com/questions/53322952/creating-a-land-ocean-mask-in-cartopy
 """
 
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 import cartopy.io.shapereader as shpreader
 import numpy as np
-from shapely.geometry import Point
-from shapely.prepared import prep
+from shapely.geometry import box
+import shapely.vectorized
 import xarray as xr
-
-import matplotlib.pyplot as plt
 
 def main():
 
+    # read OI bathymetry
     ana = xr.open_dataset('data/interim/oi_bathymetry.nc')['ana'].stack(xy=('x', 'y'))
 
+    # get coordinates
     lons = ana.lon.values
     lats = ana.lat.values
 
-    # load the shapefile geometries
-    land_10m = cfeature.NaturalEarthFeature('physical', 'land', '50m')
-    land_polygons = list(land_10m.geometries())
+    # create bounding box of model domain
+    bbox = box(lons.min(), lats.min(), lons.max(), lats.max())
 
-    # turn the model coordinates into shapely Points
-    points = [Point(point) for point in zip(lons, lats)]
+    # read shapefile
+    shpfilename = shpreader.natural_earth(resolution='50m',
+                                          category='physical',
+                                          name='land')
+    reader = shpreader.Reader(shpfilename)
 
-    # prepare land polygons for speed-up
-    land_polygons_prep = [prep(land_polygon) for land_polygon in land_polygons]
+    # select all polygons that fall within model bounding box
+    rec = list(reader.geometries())
+    polys = [land for land in rec if land.intersects(bbox)]
 
-    # determine the model grid points that fall on land
-    land = []
-    for land_polygon in land_polygons_prep:
-        land.extend([tuple(point.coords)[0] for point in filter(land_polygon.covers, points)])
-
-    # find indeces of land points
-    lon_land, lat_land = zip(*land)
-    _, ind, _ = np.intersect1d(lons, lon_land, return_indices=True)
+    # get indices of grid points which are within each polygon
+    inds = [np.where(shapely.vectorized.contains(poly, lons, lats)) for poly in polys]
+    inds = np.unique(np.concatenate(inds, axis=1))
 
     # set land points to zero and multiply by -1 to make depth values positive
-    ana[ind] = 0.
+    ana[inds] = 0.
     ana = -1 * ana.unstack()
 
     # prepare output dataset
