@@ -9,13 +9,8 @@ import xarray as xr
 
 from tools import ll2xyz, read_webtide
 
-from dask.distributed import Client
-
-import matplotlib.pyplot as plt
 
 def main():
-
-    client = Client()
 
     wtdset = 'HRglobal'
     hmin = 5.
@@ -43,19 +38,21 @@ def main():
                            k=1,
                            n_jobs=-1)
 
+    # compute the minimum depth according to Maraldi et al. 2013
     mindepth = np.maximum(hmin, ampfac * df.ampmax[inds].values)
 
     # replace shallow grid points with minimum depth
-    ana = np.maximum(ana, mindepth).unstack()
+    ana = ana.fillna(0.)
+    ana = np.maximum(ana, mindepth)
+
+    # set maximum depth
+    ana[ana > hmax] = hmax
 
     # prepare output dataset
-    dsout = ana.to_dataset(name='ana')
-
-    dsout['ana'].plot()
-    plt.show()
+    dsout = ana.unstack().to_dataset(name='ana')
 
     # write to file
-    # dsout.to_netcdf('data/interim/oi_bathymetry_masked.nc')
+    dsout.to_netcdf('data/interim/oi_bathymetry_depth_corrected.nc')
 
 
 if __name__ == '__main__':
