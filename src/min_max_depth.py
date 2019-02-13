@@ -19,7 +19,7 @@ def main():
 
     # read masked bathymetry
     ana = xr.open_dataset('data/interim/oi_bathymetry_masked.nc')['ana'].stack(xy=('x', 'y'))
-    ana = ana.where(ana != 0.)
+    mask = ana.where(ana == 0., other=1.)
 
     # read WebTide data
     df = read_webtide(wtdset, ampmax=True)
@@ -42,8 +42,8 @@ def main():
     mindepth = np.maximum(hmin, ampfac * df.ampmax[inds].values)
 
     # replace shallow grid points with minimum depth
-    ana = ana.fillna(0.)
     ana = np.maximum(ana, mindepth)
+    ana[mask == 0.] = 0.
 
     # set maximum depth
     ana[ana > hmax] = hmax
