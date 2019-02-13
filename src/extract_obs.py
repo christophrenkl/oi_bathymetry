@@ -13,6 +13,10 @@ def main():
     latmin = 37.567801
     latmax = 48.848009
 
+<<<<<<< HEAD
+=======
+    # fname = '/media/chrenkl/external/NWATL21_out.txt'
+>>>>>>> 58109c156795b42742054199248e0cd1da53b549
     fname = 'data/raw/NWATL21_out.txt'
 
     # client = Client(processes=False)

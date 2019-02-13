@@ -3,135 +3,168 @@
 """ Optimal interplation of background and observations.
 
 """
-import dask.array as da
 import numpy as np
-from scipy.spatial import cKDTree
+from numpy.linalg import inv
 import xarray as xr
 
-import dask
-
-from tools import ll2xyz
-
-import matplotlib.pyplot as plt
-
+from dask.distributed import Client
 
 def main():
+
+    client = Client()
+
+    # parameters - hard-coded for now
+    c = 1e4 # [m]
+    sigobs = 1.
+    N = 60
 
     # read background field and gridded observations
     bg = xr.open_dataset('data/interim/GEBCO_background.nc')['ele']
     obs = xr.open_dataset('data/interim/NWATL21_subset_gridded.nc')['depth']
 
-    # reshape 2D fields to vectors
-    bg = bg.stack(z=('x', 'y'))
-    obs = obs.stack(z=('x', 'y'))
+    # create data array for optimally interpolated bathymetry
+    ana = xr.DataArray(np.ones_like(bg) * np.nan)
 
-    # drop all grid points without observations
-    obs =  obs.where(obs != 0., drop=True)
+    # Since working on the whole model domain can be computationally expensive,
+    # the procedure is to select sliding sub-domains to apply the OI scheme to.
+    # For the Gaspari-Cohn localization, information outside the sub-domains is
+    # needed, so we have do extend the subdomains by enough grid points to have
+    # all observations within a radius of two times the length scale c included.
 
-    # number of grid points with observations
-    nobs = len(obs.z)
+    # calulate grid spacing in x- and y-direction, choose the maximum value
+    dx = haversine(bg.lon.isel({'x': 0, 'y': 0}), bg.lat.isel({'x': 0, 'y': 0}),
+                   bg.lon.isel({'x': 1, 'y': 0}), bg.lat.isel({'x': 1, 'y': 0}))
+    dy = haversine(bg.lon.isel({'x': 0, 'y': 0}), bg.lat.isel({'x': 0, 'y': 0}),
+                   bg.lon.isel({'x': 0, 'y': 1}), bg.lat.isel({'x': 0, 'y': 1}))
+    delta = np.max((dx, dy))
 
-    # convert lon/lat to Cartesian coordinates
-    xbg, ybg, zbg = ll2xyz(bg.lon.values, bg.lat.values)
-    xo, yo, zo = ll2xyz(obs.lon.values, obs.lat.values)
+    # number of ghost cells for each sub-domain extension
+    ng = (c // delta + 1).astype(int)
 
-    # create cKDTree object to represent source grid
-    tree = cKDTree(list(zip(xbg, ybg, zbg)))
+    # get the size of the whole model domain to determine number of sub-domains
+    # which should contain NxN grid points
+    nx, ny = bg.shape
+    nx = nx // N + 1
+    ny = ny // N + 1
 
-    # find indices of the nearest neighbor
-    _, ind = tree.query(list(zip(xo, yo, zo)), k=1, n_jobs=-1)
+    # subdomain counter
+    dcount = 0
 
-    # create H-matrix with dimension [nobs, len(bg.z)]
-    H = h_matrix(ind, len(bg.z))
+    # itereate through sub-domains
+    for ix in range(nx):
+        # start and end indices of sub-domain in i-direction
+        i1 = ix * N
+        i2 = min((ix+1) * N,  bg.shape[0])
 
-    print(H)
+        # start and end indices of extended sub-domain in i-direction
+        i1e = max(0, i1-ng)
+        i2e = min(bg.shape[0], i2+ng)
+
+        for iy in range(ny):
+
+            dcount = dcount + 1
+            print('Process sub-domain {}/{}'.format(dcount, nx*ny))
+
+            # start and end indices of sub-domain in j-direction
+            j1 = iy * N
+            j2 = min((iy+1) * N,  bg.shape[1])
+
+            # start and end indices of extended sub-domain in j-direction
+            j1e = max(0, j1-ng)
+            j2e = min(bg.shape[1], j2+ng)
+
+            # select sub-domain and reshape 2D fields to vectors
+            xb = bg.isel(x=slice(i1e, i2e), y=slice(j1e, j2e)).stack(xy=('x', 'y'))
+            xo = obs.isel(x=slice(i1e, i2e), y=slice(j1e, j2e)).stack(xy=('x', 'y'))
+
+            # drop all grid points without observations
+            xo = xo.where(xo != 0., drop=True)
+
+            # observation error covariance matrix
+            R = np.eye(len(xo.xy))
+
+            # Gaspari-Cohn localization matrix
+            B = gaspari_cohn_matrix(xb.lon.values, xb.lat.values, c)
+
+            # H operator - maps model and observation grid points
+            H = h_operator(xb, xo)
+
+            # compute weight matrix
+            S = H.dot(B).dot(H.T) + R
+            W = B.dot(H.T).dot(inv(S))
+
+            # optimal interpolation
+            xa = xb + W.dot(xo - H.dot(xb))
+            xa = xa.unstack()
+
+            # write to output dataset
+            ana[slice(i1, i2), slice(j1, j2)] = xa[i1-i1e:i1-i1e+N, j1-j1e:j1-j1e+N]
+
+    # create output dataset
+    dsout = xr.Dataset(data_vars={'ana': (['x', 'y'], ana)},
+                       coords={'lon': (['x', 'y'], bg.lon),
+                               'lat': (['x', 'y'], bg.lat)})
+
+    # write to file
+    dsout.to_netcdf('data/interim/oi_bathymetry.nc')
 
 
-def h_matrix(ind, ncols):
+def h_operator(xb, xo):
 
-    create_row_lazy = dask.delayed(create_row, pure=True)
+    # indeces of grid points where observations exist
+    _, ind, _ = np.intersect1d(xb.xy, xo.xy, return_indices=True)
 
-    lazy_rows = [create_row_lazy(ncols, ii) for ii in ind]
+    # number of grid points in background and observations
+    nxb = len(xb.xy)
+    nxo = len(xo.xy)
 
-    sample = lazy_rows[0].compute()  # load the first image (assume rest are same shape/dtype)
+    # create H operator
+    H = np.zeros((nxo, nxb))
+    H[range(nxo), ind]  = 1.
 
-    rows = [da.from_delayed(lazy_row,           # Construct a small Dask array
-                            dtype=sample.dtype,   # for every lazy value
-                            shape=sample.shape) for lazy_row in lazy_rows]
-
-    return da.stack(rows, axis=0).rechunk(chunks=(1000, 1000))
-
-
-def create_row(length, ind):
-    row = np.zeros((length))
-    row[ind] = 1
-    return row
+    return H
 
 
+def gaspari_cohn_matrix(xblon, xblat, c):
 
-
-    # # compute innovation (y - Hx)
-    # yHx = (yo - xb)# .fillna(value=0.)
-    #
-    # print(yHx[np.where((yHx != 0.))])
-    #
-    # # yHx.plot(cmap='viridis')
-    # # plt.show()
-    # #
-
-def oi_gaspari_cohn(x1m, x2m, x1o, x2o, ymHx, c, nsobs, sigobs, nstar):
-    '''Optimal interpolation using Gaspari-Cohn correlation function.'''
-
-    # number of observations
-    nobs = len(x1o)
-
-    # R-matrix: observation error covariance matrix
-    R = np.diag(sigobs / nsobs + sigobs / nstar)
-
-    # initialize H-matrix
-    H = np.zeros((nobs, len(x1m)))
-
-    # fill H-matrix at indices of nearest neighbour
-    for irow in np.arange(nobs):
-
-        z = x1o[irow] - x1m + 1j * (x2o[irow] - x2m)
-        ind = np.abs(z).argmin()
-        H[irow, ind] = 1.
+    # create matrix with all combinations of grid points
+    tmp = xblon + 1j * xblat
+    tmp = np.array([tmp,] * len(tmp))
+    a1 = tmp.flatten()
+    a2 = tmp.T.flatten()
 
     # compute intra-grid distances
-    z = x1m + 1j * x2m
-    Z = np.array([z,] * len(z))
-    igdist = np.abs(Z - Z.T)
+    d = haversine(np.real(a1), np.imag(a1), np.real(a2), np.imag(a2))
+    d = d.reshape(tmp.shape)
 
-    # Q-matrix: background error
-    Q = 100000. * np.ones(len(x1m))
-    #Q[bckgrnd[imod] < 10.] = 2.
-    Q = np.diag(Q)
+    # clean up some memory
+    del tmp, a1, a2
 
-    # B-matrix: covariance matrix
-    B = np.zeros_like(igdist)
-    i1 = np.where(igdist < c)
-    i2 = np.where((igdist >= c) & (igdist < 2 * c))
-    z = igdist[i1] / c
+    B = np.zeros_like(d)
+    z1 = d[d < c] / c
+    B[d < c] = -z1**5 / 4 + z1**4 /2 + 5/8 * z1**3 - 5/3 * z1**2 + 1
 
-    B[i1] = -z**5 / 4 + z**4 /2 + 5/8 * z**3 - 5/3 * z**2 + 1
+    z2 = d[(d >= c) & (d < 2 * c)] / c
+    B[(d >= c) & (d < 2 * c)] = z2**5 / 12 - z2**4 /2 + 5/8 * z2**3 \
+                                + 5/3 * z2**2 - 5*z2 + 4 - 2/3 * 1/z2
 
-    z = igdist[i2] / c
+    return B
 
-    B[i2] = z**5 / 12 - z**4 /2 + 5/8 * z**3 + 5/3 * z**2 - 5*z \
-            + 4 - 2/3 * 1/z
 
-    # weighting with background error
-    B = Q.dot(B).dot(Q)
+def haversine(lon1, lat1, lon2, lat2):
+    """ """
 
-    # optimal interpolation
-    I = np.eye(len(x1m))
-    W = B.dot(H.T).dot(np.linalg.inv((H.dot(B).dot(H.T) + R)))
+    lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
 
-    pred = W.dot(ymHx)
-    Pa = np.diag((I - W.dot(H)).dot(B)) / np.diag(B)
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
 
-    return pred, Pa
+    a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
+    c = 2 * np.arcsin(np.sqrt(a))
+    d = 6371e3 * c
+
+    return d
+
 
 if __name__ == '__main__':
 
