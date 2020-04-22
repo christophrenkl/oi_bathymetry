@@ -9,13 +9,15 @@ import xarray as xr
 
 from tools import ll2xyz, read_webtide
 
+import matplotlib.pyplot as plt
+
 
 def main():
 
-    wtdset = 'HRglobal'
-    hmin = 5.
+    wtdset = 'nwatl'
+    hmin = 2.5
     hmax = 4000.
-    ampfac = 1.2
+    ampfac = 1.5
 
     # read masked bathymetry
     ana = xr.open_dataset('data/interim/oi_bathymetry_masked.nc')['ana'].stack(xy=('x', 'y'))
@@ -39,7 +41,7 @@ def main():
                            n_jobs=-1)
 
     # compute the minimum depth according to Maraldi et al. 2013
-    mindepth = np.maximum(hmin, ampfac * df.ampmax[inds].values)
+    mindepth = ampfac * df.ampmax[inds].values  #np.maximum(hmin, ampfac * df.ampmax[inds].values)
 
     # replace shallow grid points with minimum depth
     ana = np.maximum(ana, mindepth)
