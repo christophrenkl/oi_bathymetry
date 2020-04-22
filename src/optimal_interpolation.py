@@ -14,9 +14,9 @@ def main():
     client = Client()
 
     # parameters - hard-coded for now
-    c = 1e4 # [m]
+    c = 10.e4 #7.5e4 # [m]
     sigobs = 1.
-    N = 60
+    N = 20
 
     # read background field and gridded observations
     bg = xr.open_dataset('data/interim/GEBCO_background.nc')['ele']
